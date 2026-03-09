@@ -4,7 +4,6 @@ namespace HendaBastian\LaracrudApigen;
 
 use Illuminate\Support\ServiceProvider;
 use HendaBastian\LaracrudApigen\Commands\GenerateCrudApi;
-use HendaBastian\LaracrudApigen\Commands\InstallCrudGenerator;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Str;
 
@@ -22,7 +21,6 @@ class CrudGeneratorServiceProvider extends ServiceProvider
         if ($this->app->runningInConsole()) {
             $this->commands([
                 GenerateCrudApi::class,
-                InstallCrudGenerator::class,
             ]);
 
             $this->publishes([

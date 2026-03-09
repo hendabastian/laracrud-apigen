@@ -29,13 +29,7 @@ Generate complete CRUD APIs for Laravel with a single Artisan command.
 ## Installation
 
 ```bash
-composer require hendabastian/laracrud-generator --dev
-```
-
-Run the install command to publish config and base repository files:
-
-```bash
-php artisan crud-generator:install
+composer require hendabastian/laracrud-apigen --dev
 ```
 
 ## Usage
