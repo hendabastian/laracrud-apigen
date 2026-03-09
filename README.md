@@ -29,7 +29,7 @@ Generate complete CRUD APIs for Laravel with a single Artisan command.
 ## Installation
 
 ```bash
-composer require karrierpage/laracrud-generator --dev
+composer require hendabastian/laracrud-generator --dev
 ```
 
 Run the install command to publish config and base repository files:
@@ -286,16 +286,6 @@ public function toArray(Request $request): array
 ```
 
 ## Prerequisites
-
-Make sure your `AppServiceProvider` has a `//` comment marker inside the `register()` method where bindings will be inserted:
-
-```php
-public function register(): void
-{
-    // existing bindings...
-    //
-}
-```
 
 Make sure your `bootstrap/app.php` includes the API routes:
 

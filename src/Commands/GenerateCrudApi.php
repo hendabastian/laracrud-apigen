@@ -60,6 +60,10 @@ class GenerateCrudApi extends Command
 
         $this->analyzeModel($modelClass);
 
+        if (!$this->option('skip-repository')) {
+            $this->ensureBaseRepositoryExists();
+        }
+
         $this->generateRepositoryInterface();
         $this->generateRepository();
         $this->generateCreateRequest();
@@ -74,8 +78,6 @@ class GenerateCrudApi extends Command
         if (!$this->option('skip-routes')) {
             $this->registerRoutes();
         }
-
-        $this->registerRepositoryBinding();
 
         $this->newLine();
         $this->info("CRUD API for {$this->model} generated successfully!");
@@ -177,6 +179,35 @@ class GenerateCrudApi extends Command
     protected function namespacePath(string $namespace): string
     {
         return str_replace('\\', '/', lcfirst($namespace));
+    }
+
+    protected function ensureBaseRepositoryExists(): void
+    {
+        $repoNs = config('crud-generator.repository_namespace', 'App\\Repositories');
+        $basePath = base_path($this->namespacePath($repoNs));
+
+        $baseRepoPath = "{$basePath}/BaseRepository.php";
+        $baseInterfacePath = "{$basePath}/Contracts/BaseRepositoryInterface.php";
+
+        $missing = !$this->files->exists($baseRepoPath) || !$this->files->exists($baseInterfacePath);
+
+        if (!$missing) {
+            return;
+        }
+
+        $this->components->warn('Base repository files not found. Publishing them now...');
+
+        $stubPath = dirname(__DIR__, 2) . '/stubs';
+
+        if (!$this->files->exists($baseInterfacePath)) {
+            $this->writeFile($baseInterfacePath, $this->files->get("{$stubPath}/BaseRepositoryInterface.stub"));
+            $this->components->info("Created: {$baseInterfacePath}");
+        }
+
+        if (!$this->files->exists($baseRepoPath)) {
+            $this->writeFile($baseRepoPath, $this->files->get("{$stubPath}/BaseRepository.stub"));
+            $this->components->info("Created: {$baseRepoPath}");
+        }
     }
 
     protected function generateRepositoryInterface(): void
@@ -625,42 +656,6 @@ class GenerateCrudApi extends Command
 
         $this->files->append($routeFile, "\n{$routeLine}\n");
         $this->components->info("Route registered for {$this->model} in {$routeFile}");
-    }
-
-    protected function registerRepositoryBinding(): void
-    {
-        if ($this->option('skip-repository')) {
-            return;
-        }
-
-        $repoNs = config('crud-generator.repository_namespace', 'App\\Repositories');
-        $providerPath = base_path(config('crud-generator.service_provider', 'app/Providers/AppServiceProvider.php'));
-        $content = $this->files->get($providerPath);
-
-        $interfaceClass = "\\{$repoNs}\\Contracts\\{$this->model}RepositoryInterface::class";
-        $repositoryClass = "\\{$repoNs}\\{$this->model}Repository::class";
-
-        if (Str::contains($content, $interfaceClass)) {
-            $this->warn("Repository binding for {$this->model} already exists in AppServiceProvider.");
-
-            return;
-        }
-
-        $bindingLine = "\$this->app->bind({$interfaceClass}, {$repositoryClass});";
-
-        $pattern = '/(public function register\(\): void\s*\{.*?)(        \/\/)/s';
-
-        if (preg_match($pattern, $content)) {
-            $content = preg_replace(
-                $pattern,
-                '$1        ' . $bindingLine . "\n        //",
-                $content,
-                1
-            );
-        }
-
-        $this->files->put($providerPath, $content);
-        $this->components->info('Repository binding registered in AppServiceProvider.');
     }
 
     protected function buildCreateValidationRules(): array
