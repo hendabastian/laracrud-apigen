@@ -100,8 +100,6 @@ class GenerateCrudApi extends Command
         $table = $model->getTable();
         $excluded = config('crud-generator.excluded_columns', [
             'id',
-            'created_at',
-            'updated_at',
             'deleted_at',
             'remember_token',
             'email_verified_at',
@@ -142,6 +140,10 @@ class GenerateCrudApi extends Command
                 $this->foreignKeys[$name] = $relatedTable;
                 $this->relationships[Str::camel(Str::beforeLast($name, '_id'))] = Str::studly(Str::singular($relatedTable));
             }
+        }
+
+        if (empty($this->columns)) {
+            $this->warn("No columns detected for table '{$table}'. This may happen if the table name does not match the database (e.g. irregular pluralization). Consider adding \$table property to your model.");
         }
     }
 
@@ -232,7 +234,7 @@ class GenerateCrudApi extends Command
 
         interface {$this->model}RepositoryInterface extends BaseRepositoryInterface
         {
-            //
+            public function list(): mixed;
         }
         PHP;
 
@@ -248,12 +250,48 @@ class GenerateCrudApi extends Command
 
         $repoNs = config('crud-generator.repository_namespace', 'App\\Repositories');
         $modelNs = config('crud-generator.model_namespace', 'App\\Models');
+        $useQueryBuilder = config('crud-generator.use_query_builder', true);
+        $useJsonPaginate = config('crud-generator.use_json_api_paginate', true);
+
         $path = base_path($this->namespacePath($repoNs) . "/{$this->model}Repository.php");
 
         if ($this->files->exists($path) && !$this->option('force')) {
             $this->warn("Repository already exists: {$path}");
 
             return;
+        }
+
+        $paginateMethod = $useJsonPaginate ? 'jsonPaginate' : 'paginate';
+
+        $filterFields = $this->getFilterableFields();
+        $dateFields = $this->getDateFilterFields();
+        $sortFields = $this->getSortableFields();
+        $includeRelations = $this->getIncludableRelations();
+
+        $filtersString = $this->buildFiltersArray($filterFields, $dateFields);
+        $sortsString = implode(', ', array_map(fn($f) => "'{$f}'", $sortFields));
+        $includesString = implode(', ', array_map(fn($f) => "'{$f}'", $includeRelations));
+
+        $hasDateFilters = !empty($dateFields);
+
+        if ($useQueryBuilder) {
+            $queryBuilderImport = "use Spatie\\QueryBuilder\\QueryBuilder;";
+            $allowedFilterImport = $hasDateFilters ? "\nuse Spatie\\QueryBuilder\\AllowedFilter;" : '';
+            $listBody = <<<PHP
+                    return QueryBuilder::for(\$this->model->query())
+                        ->allowedFilters([
+                            {$filtersString}
+                        ])
+                        ->allowedSorts([{$sortsString}])
+                        ->allowedIncludes([{$includesString}])
+                        ->{$paginateMethod}();
+            PHP;
+        } else {
+            $queryBuilderImport = '';
+            $allowedFilterImport = '';
+            $listBody = <<<PHP
+                    return \$this->model->query()->{$paginateMethod}();
+            PHP;
         }
 
         $content = <<<PHP
@@ -263,12 +301,18 @@ class GenerateCrudApi extends Command
 
         use {$modelNs}\\{$this->model};
         use {$repoNs}\Contracts\\{$this->model}RepositoryInterface;
+        {$queryBuilderImport}{$allowedFilterImport}
 
         class {$this->model}Repository extends BaseRepository implements {$this->model}RepositoryInterface
         {
             public function __construct({$this->model} \$model)
             {
                 parent::__construct(\$model);
+            }
+
+            public function list(): mixed
+            {
+        {$listBody}
             }
         }
         PHP;
@@ -443,12 +487,18 @@ class GenerateCrudApi extends Command
         }
 
         $filterFields = $this->getFilterableFields();
+        $dateFields = $this->getDateFilterFields();
         $sortFields = $this->getSortableFields();
         $includeRelations = $this->getIncludableRelations();
 
-        $filtersString = implode(', ', array_map(fn($f) => "'{$f}'", $filterFields));
+        $filtersString = $this->buildFiltersArray($filterFields, $dateFields);
         $sortsString = implode(', ', array_map(fn($f) => "'{$f}'", $sortFields));
         $includesString = implode(', ', array_map(fn($f) => "'{$f}'", $includeRelations));
+
+        $hasDateFilters = !empty($dateFields);
+
+        // Build Scramble QueryParameter attributes for OpenAPI docs
+        $queryParamAttributes = $this->buildQueryParameterAttributes($filterFields, $sortFields, $includeRelations);
 
         $skipRepo = $this->option('skip-repository');
 
@@ -463,21 +513,26 @@ class GenerateCrudApi extends Command
 
         $paginateMethod = $useJsonPaginate ? 'jsonPaginate' : 'paginate';
 
-        if ($useQueryBuilder) {
-            $queryBuilderImport = 'use Spatie\\QueryBuilder\\QueryBuilder;';
-            $indexQuery = $skipRepo
-                ? "QueryBuilder::for({$this->model}::query())"
-                : 'QueryBuilder::for($this->repository->getModel()->query())';
-            $indexBody = "        \${$this->modelPlural} = {$indexQuery}\n"
-                . "            ->allowedFilters([{$filtersString}])\n"
-                . "            ->allowedSorts([{$sortsString}])\n"
-                . "            ->allowedIncludes([{$includesString}])\n"
-                . "            ->{$paginateMethod}();";
+        if ($skipRepo) {
+            if ($useQueryBuilder) {
+                $queryBuilderImport = 'use Spatie\\QueryBuilder\\QueryBuilder;';
+                $allowedFilterImport = $hasDateFilters ? "\nuse Spatie\\QueryBuilder\\AllowedFilter;" : '';
+                $indexBody = "        \${$this->modelPlural} = QueryBuilder::for({$this->model}::query())\n"
+                    . "            ->allowedFilters([\n"
+                    . "                {$filtersString}\n"
+                    . "            ])\n"
+                    . "            ->allowedSorts([{$sortsString}])\n"
+                    . "            ->allowedIncludes([{$includesString}])\n"
+                    . "            ->{$paginateMethod}();";
+            } else {
+                $queryBuilderImport = '';
+                $allowedFilterImport = '';
+                $indexBody = "        \${$this->modelPlural} = {$this->model}::query()->{$paginateMethod}();";
+            }
         } else {
             $queryBuilderImport = '';
-            $indexBody = $skipRepo
-                ? "        \${$this->modelPlural} = {$this->model}::query()->{$paginateMethod}();"
-                : "        \${$this->modelPlural} = \$this->repository->getModel()->query()->{$paginateMethod}();";
+            $allowedFilterImport = '';
+            $indexBody = "        \${$this->modelPlural} = \$this->repository->list();";
         }
 
         $storeBody = $skipRepo
@@ -505,7 +560,8 @@ class GenerateCrudApi extends Command
         {$repositoryImport}
         use Illuminate\Http\JsonResponse;
         use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
-        {$queryBuilderImport}
+        use Dedoc\Scramble\Attributes\QueryParameter;
+        {$queryBuilderImport}{$allowedFilterImport}
 
         class {$this->model}Controller extends Controller
         {
@@ -514,6 +570,7 @@ class GenerateCrudApi extends Command
             /**
              * Display a listing of the resource.
              */
+        {$queryParamAttributes}
             public function index(): AnonymousResourceCollection
             {
         {$indexBody}
@@ -606,6 +663,8 @@ class GenerateCrudApi extends Command
             <?php
 
             namespace {$dtoNs};
+
+            use Carbon\Carbon;
 
             class {$this->model}DTO
             {
@@ -768,8 +827,13 @@ class GenerateCrudApi extends Command
     protected function buildDTOProperties(): array
     {
         $properties = [];
+        $excludeFields = ['id', 'created_at', 'updated_at'];
 
         foreach ($this->columns as $name => $column) {
+            if (in_array($name, $excludeFields)) {
+                continue;
+            }
+
             $phpType = $this->mapToPhpType($column['type']);
             $nullable = $column['nullable'] || $column['default'] !== null;
 
@@ -789,9 +853,60 @@ class GenerateCrudApi extends Command
             in_array($type, ['int', 'integer', 'bigint', 'smallint', 'tinyint', 'int2', 'int4', 'int8']) => 'int',
             in_array($type, ['decimal', 'float', 'double', 'numeric', 'float4', 'float8']) => 'float',
             in_array($type, ['boolean', 'bool']) => 'bool',
-            in_array($type, ['date', 'datetime', 'timestamp', 'timestamptz']) => 'string',
+            in_array($type, ['date', 'datetime', 'timestamp', 'timestamptz']) => 'Carbon',
             default => 'string',
         };
+    }
+
+    protected function buildQueryParameterAttributes(array $filterFields, array $sortFields, array $includeRelations): string
+    {
+        $attributes = [];
+        $dateFields = $this->getDateFilterFields();
+
+        foreach ($filterFields as $field) {
+            if (in_array($field, $dateFields)) {
+                $attributes[] = "    #[QueryParameter('filter[{$field}]', description: 'Filter by {$field}. Supports exact date or range with comma separator (e.g. 2025-01-01,2025-01-31).', type: 'string', example: '2025-01-01,2025-01-31')]";
+            } else {
+                $attributes[] = "    #[QueryParameter('filter[{$field}]', description: 'Filter by {$field}.', type: 'string')]";
+            }
+        }
+
+        if (!empty($sortFields)) {
+            $allowedValues = implode(', ', array_map(
+                fn($f) => "{$f}, -{$f}",
+                $sortFields
+            ));
+            $attributes[] = "    #[QueryParameter('sort', description: 'Sort by field. Allowed: {$allowedValues}. Prefix with - for descending.', type: 'string', example: '{$sortFields[0]}')]";
+        }
+
+        if (!empty($includeRelations)) {
+            $allowedIncludes = implode(', ', $includeRelations);
+            $attributes[] = "    #[QueryParameter('include', description: 'Include related resources. Allowed: {$allowedIncludes}. Comma-separated for multiple.', type: 'string', example: '{$includeRelations[0]}')]";
+        }
+
+        $useJsonPaginate = config('crud-generator.use_json_api_paginate', true);
+
+        if ($useJsonPaginate) {
+            $paginationParam = config('json-api-paginate.pagination_parameter', 'page');
+            $numberParam = config('json-api-paginate.number_parameter', 'number');
+            $sizeParam = config('json-api-paginate.size_parameter', 'size');
+            $defaultSize = config('json-api-paginate.default_size', 30);
+            $useCursorPagination = config('json-api-paginate.use_cursor_pagination', false);
+
+            if ($useCursorPagination) {
+                $cursorParam = config('json-api-paginate.cursor_parameter', 'cursor');
+                $attributes[] = "    #[QueryParameter('{$paginationParam}[{$cursorParam}]', description: 'Cursor for cursor-based pagination.', type: 'string')]";
+            } else {
+                $attributes[] = "    #[QueryParameter('{$paginationParam}[{$numberParam}]', description: 'Page number for pagination.', type: 'int', example: 1)]";
+            }
+
+            $attributes[] = "    #[QueryParameter('{$paginationParam}[{$sizeParam}]', description: 'Number of items per page.', type: 'int', example: {$defaultSize})]";
+        } else {
+            $attributes[] = "    #[QueryParameter('page', description: 'Page number for pagination.', type: 'int', example: 1)]";
+            $attributes[] = "    #[QueryParameter('per_page', description: 'Number of items per page.', type: 'int', example: 15)]";
+        }
+
+        return implode("\n", $attributes);
     }
 
     protected function getFilterableFields(): array
@@ -799,9 +914,38 @@ class GenerateCrudApi extends Command
         return array_keys($this->columns);
     }
 
+    protected function getDateFilterFields(): array
+    {
+        $dateTypes = ['date', 'datetime', 'timestamp', 'timestamptz'];
+
+        return array_keys(array_filter($this->columns, fn($col) => in_array($col['type'], $dateTypes)));
+    }
+
+    protected function buildFiltersArray(array $filterFields, array $dateFields): string
+    {
+        $filters = [];
+
+        foreach ($filterFields as $field) {
+            if (in_array($field, $dateFields)) {
+                $filters[] = "AllowedFilter::callback('{$field}', function (\$query, \$value) {\n"
+                    . "                    if (is_string(\$value) && str_contains(\$value, ',')) {\n"
+                    . "                        [\$from, \$to] = explode(',', \$value, 2);\n"
+                    . "                        \$query->whereBetween('{$field}', [trim(\$from), trim(\$to)]);\n"
+                    . "                    } else {\n"
+                    . "                        \$query->whereDate('{$field}', \$value);\n"
+                    . "                    }\n"
+                    . "                })";
+            } else {
+                $filters[] = "'{$field}'";
+            }
+        }
+
+        return implode(",\n                ", $filters);
+    }
+
     protected function getSortableFields(): array
     {
-        return [...array_keys($this->columns), 'created_at', 'updated_at'];
+        return array_keys($this->columns);
     }
 
     protected function getIncludableRelations(): array

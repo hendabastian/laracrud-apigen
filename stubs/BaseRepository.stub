@@ -17,6 +17,11 @@ class BaseRepository implements BaseRepositoryInterface
         return $this->model;
     }
 
+    public function list(): mixed
+    {
+        return $this->model->query()->paginate();
+    }
+
     public function all(): Collection
     {
         return $this->model->all();

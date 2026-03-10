@@ -77,13 +77,12 @@ return [
     | Excluded Columns
     |--------------------------------------------------------------------------
     |
-    | Columns that should be excluded from generated code (validation, resource, DTO).
+    | Columns that should be excluded from all generated code
+    | (validation, resource, DTO, filters, sorts).
     |
     */
     'excluded_columns' => [
         'id',
-        'created_at',
-        'updated_at',
         'deleted_at',
         'remember_token',
         'email_verified_at',

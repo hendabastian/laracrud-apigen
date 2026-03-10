@@ -9,6 +9,8 @@ interface BaseRepositoryInterface
 {
     public function getModel(): Model;
 
+    public function list(): mixed;
+
     public function all(): Collection;
 
     public function find(int $id): ?Model;

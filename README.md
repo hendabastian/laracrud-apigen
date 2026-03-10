@@ -7,13 +7,14 @@ Generate complete CRUD APIs for Laravel with a single Artisan command.
 - API Controller with full CRUD operations
 - Form Request validation classes (Create & Update)
 - API Resource for JSON transformation
-- Repository pattern (Interface + Implementation)
+- Repository pattern (Interface + Implementation) with listing logic in the repository layer
 - DTO generation using Spatie Laravel Data
-- Spatie Query Builder integration (filters, sorts, includes)
-- JSON:API pagination via Spatie JSON API Paginate
+- Spatie Query Builder integration (filters, sorts, includes) — encapsulated in the repository
+- JSON:API pagination via Spatie JSON API Paginate (config-driven parameter names and defaults)
+- OpenAPI documentation attributes driven by `json-api-paginate` config (supports `page[number]`/`page[size]` and cursor pagination)
 - Automatic route registration
 - Automatic service provider binding
-- Smart column type detection (MySQL, PostgreSQL, SQLite)
+- Smart column type detection (MySQL, PostgreSQL, SQLite) with automatic `Carbon` casting for date/datetime/timestamp columns
 
 ## Requirements
 
@@ -114,7 +115,70 @@ return [
 
 ## Customizing Business Logic
 
-The generated code is yours to modify. The repository pattern makes it easy to add custom logic without touching the controller.
+The generated code is yours to modify. The repository pattern keeps all data-access logic (including listing with filters, sorts, and pagination) in the repository layer, keeping controllers thin.
+
+### Generated repository structure
+
+The generated repository includes a `list()` method that encapsulates query builder logic:
+
+```php
+// app/Repositories/CompanyRepository.php (generated)
+<?php
+
+namespace App\Repositories;
+
+use App\Models\Company;
+use App\Repositories\Contracts\CompanyRepositoryInterface;
+use Spatie\QueryBuilder\QueryBuilder;
+
+class CompanyRepository extends BaseRepository implements CompanyRepositoryInterface
+{
+    public function __construct(Company $model)
+    {
+        parent::__construct($model);
+    }
+
+    public function list(): mixed
+    {
+        return QueryBuilder::for($this->model->query())
+            ->allowedFilters(['name', 'email', ...])
+            ->allowedSorts(['name', 'email', ..., 'created_at', 'updated_at'])
+            ->allowedIncludes([...])
+            ->jsonPaginate();
+    }
+}
+```
+
+The controller's `index()` simply delegates to the repository:
+
+```php
+public function index(): AnonymousResourceCollection
+{
+    $companies = $this->repository->list();
+
+    return CompanyResource::collection($companies);
+}
+```
+
+### Overriding the list method
+
+Customize filtering, sorting, or add scopes by overriding `list()`:
+
+```php
+// app/Repositories/OrderRepository.php
+public function list(): mixed
+{
+    return QueryBuilder::for($this->model->query())
+        ->allowedFilters([
+            AllowedFilter::exact('status'),
+            AllowedFilter::scope('date_range'),
+        ])
+        ->allowedSorts(['total', 'created_at'])
+        ->allowedIncludes(['customer', 'items'])
+        ->where('archived', false) // always exclude archived
+        ->jsonPaginate();
+}
+```
 
 ### Adding custom methods to a repository
 
@@ -130,6 +194,8 @@ use Illuminate\Database\Eloquent\Collection;
 
 interface OrderRepositoryInterface extends BaseRepositoryInterface
 {
+    public function list(): mixed;
+
     public function findByStatus(string $status): Collection;
 
     public function cancelExpiredOrders(): int;
@@ -278,6 +344,31 @@ public function toArray(Request $request): array
     ];
 }
 ```
+
+## JSON:API Pagination
+
+When `use_json_api_paginate` is enabled, the generated OpenAPI documentation attributes automatically read from your `config/json-api-paginate.php` configuration:
+
+```php
+// config/json-api-paginate.php (published via spatie/laravel-json-api-paginate)
+return [
+    'max_results'          => 30,
+    'default_size'         => 30,
+    'number_parameter'     => 'number',
+    'size_parameter'       => 'size',
+    'cursor_parameter'     => 'cursor',
+    'pagination_parameter' => 'page',
+    'use_cursor_pagination'=> false,
+];
+```
+
+The generator uses these values to produce the correct Scramble `#[QueryParameter]` attributes:
+
+- `page[number]` and `page[size]` by default (JSON:API spec compliant)
+- `page[cursor]` and `page[size]` when `use_cursor_pagination` is enabled
+- Parameter names and example values adapt if you customize the config
+
+When `use_json_api_paginate` is disabled, the generator falls back to standard Laravel `page` and `per_page` parameters.
 
 ## Prerequisites
 
