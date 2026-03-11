@@ -14,7 +14,7 @@ Generate complete CRUD APIs for Laravel with a single Artisan command.
 - OpenAPI documentation attributes driven by `json-api-paginate` config (supports `page[number]`/`page[size]` and cursor pagination)
 - Automatic route registration
 - Automatic service provider binding
-- Smart column type detection (MySQL, PostgreSQL, SQLite) with automatic `Carbon` casting for date/datetime/timestamp columns
+- Smart column type detection (MySQL, PostgreSQL, SQLite, SQL Server) with automatic `Carbon` casting for date/datetime/timestamp columns
 
 ## Requirements
 
