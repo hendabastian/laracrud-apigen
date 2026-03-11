@@ -619,21 +619,24 @@ PHP;
             return ['string', 'url', 'max:255'];
         }
 
-        if (in_array($type, ['varchar', 'char', 'text', 'string', 'enum'])) {
+        if (in_array($type, ['varchar', 'nvarchar', 'char', 'nchar', 'text', 'ntext', 'string', 'enum'])) {
             $rules[] = 'string';
-            if ($type !== 'text') {
+            if (!in_array($type, ['text', 'ntext'])) {
                 $rules[] = 'max:255';
             }
         } elseif (in_array($type, ['int', 'integer', 'bigint', 'smallint', 'tinyint', 'int2', 'int4', 'int8'])) {
             $rules[] = 'integer';
-        } elseif (in_array($type, ['decimal', 'float', 'double', 'numeric', 'float4', 'float8'])) {
+        } elseif (in_array($type, ['decimal', 'float', 'double', 'numeric', 'float4', 'float8', 'money', 'smallmoney', 'real'])) {
             $rules[] = 'numeric';
-        } elseif (in_array($type, ['boolean', 'bool'])) {
+        } elseif (in_array($type, ['boolean', 'bool', 'bit'])) {
             $rules[] = 'boolean';
         } elseif (in_array($type, ['date'])) {
             $rules[] = 'date';
-        } elseif (in_array($type, ['datetime', 'timestamp', 'timestamptz'])) {
+        } elseif (in_array($type, ['datetime', 'datetime2', 'datetimeoffset', 'smalldatetime', 'timestamp', 'timestamptz'])) {
             $rules[] = 'date';
+        } elseif (in_array($type, ['uniqueidentifier'])) {
+            $rules[] = 'string';
+            $rules[] = 'uuid';
         } else {
             $rules[] = 'string';
             $rules[] = 'max:255';
@@ -692,9 +695,9 @@ PHP;
 
         return match (true) {
             in_array($type, ['int', 'integer', 'bigint', 'smallint', 'tinyint', 'int2', 'int4', 'int8']) => 'int',
-            in_array($type, ['decimal', 'float', 'double', 'numeric', 'float4', 'float8']) => 'float',
-            in_array($type, ['boolean', 'bool']) => 'bool',
-            in_array($type, ['date', 'datetime', 'timestamp', 'timestamptz']) => 'Carbon',
+            in_array($type, ['decimal', 'float', 'double', 'numeric', 'float4', 'float8', 'money', 'smallmoney', 'real']) => 'float',
+            in_array($type, ['boolean', 'bool', 'bit']) => 'bool',
+            in_array($type, ['date', 'datetime', 'datetime2', 'datetimeoffset', 'smalldatetime', 'timestamp', 'timestamptz']) => 'Carbon',
             default => 'string',
         };
     }
@@ -757,7 +760,7 @@ PHP;
 
     protected function getDateFilterFields(): array
     {
-        $dateTypes = ['date', 'datetime', 'timestamp', 'timestamptz'];
+        $dateTypes = ['date', 'datetime', 'datetime2', 'datetimeoffset', 'smalldatetime', 'timestamp', 'timestamptz'];
 
         return array_keys(array_filter($this->columns, fn($col) => in_array($col['type'], $dateTypes)));
     }
