@@ -1,0 +1,16 @@
+<?php
+
+namespace {{ dtoNamespace }};
+
+use Carbon\Carbon;
+use Spatie\LaravelData\Data;
+
+class {{ model }}DTO extends Data
+{
+    public function __construct(
+        public int $id,
+{{ properties }}
+        public ?Carbon $created_at = null,
+        public ?Carbon $updated_at = null,
+    ) {}
+}

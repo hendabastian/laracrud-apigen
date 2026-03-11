@@ -1,0 +1,8 @@
+<?php
+
+namespace {{ repositoryNamespace }}\Contracts;
+
+interface {{ model }}RepositoryInterface extends BaseRepositoryInterface
+{
+    public function list(): mixed;
+}

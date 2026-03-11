@@ -183,6 +183,20 @@ class GenerateCrudApi extends Command
         return str_replace('\\', '/', lcfirst($namespace));
     }
 
+    protected function getStub(string $name): string
+    {
+        return $this->files->get(dirname(__DIR__, 2) . "/stubs/{$name}.stub");
+    }
+
+    protected function replacePlaceholders(string $stub, array $replacements): string
+    {
+        foreach ($replacements as $key => $value) {
+            $stub = str_replace("{{ {$key} }}", $value, $stub);
+        }
+
+        return $stub;
+    }
+
     protected function ensureBaseRepositoryExists(): void
     {
         $repoNs = config('crud-generator.repository_namespace', 'App\\Repositories');
@@ -227,16 +241,10 @@ class GenerateCrudApi extends Command
             return;
         }
 
-        $content = <<<PHP
-        <?php
-
-        namespace {$repoNs}\Contracts;
-
-        interface {$this->model}RepositoryInterface extends BaseRepositoryInterface
-        {
-            public function list(): mixed;
-        }
-        PHP;
+        $content = $this->replacePlaceholders($this->getStub('RepositoryInterface'), [
+            'repositoryNamespace' => $repoNs,
+            'model' => $this->model,
+        ]);
 
         $this->writeFile($path, $content);
         $this->components->info("Repository interface created: {$path}");
@@ -277,45 +285,27 @@ class GenerateCrudApi extends Command
         if ($useQueryBuilder) {
             $queryBuilderImport = "use Spatie\\QueryBuilder\\QueryBuilder;";
             $allowedFilterImport = $hasDateFilters ? "\nuse Spatie\\QueryBuilder\\AllowedFilter;" : '';
-            $listBody = <<<PHP
-                    return QueryBuilder::for(\$this->model->query())
-                        ->allowedFilters([
-                            {$filtersString}
-                        ])
-                        ->allowedSorts([{$sortsString}])
-                        ->allowedIncludes([{$includesString}])
-                        ->{$paginateMethod}();
-            PHP;
+            $listBody = "        return QueryBuilder::for(\$this->model->query())\n"
+                . "            ->allowedFilters([\n"
+                . "                {$filtersString}\n"
+                . "            ])\n"
+                . "            ->allowedSorts([{$sortsString}])\n"
+                . "            ->allowedIncludes([{$includesString}])\n"
+                . "            ->{$paginateMethod}();";
         } else {
             $queryBuilderImport = '';
             $allowedFilterImport = '';
-            $listBody = <<<PHP
-                    return \$this->model->query()->{$paginateMethod}();
-            PHP;
+            $listBody = "        return \$this->model->query()->{$paginateMethod}();";
         }
 
-        $content = <<<PHP
-        <?php
-
-        namespace {$repoNs};
-
-        use {$modelNs}\\{$this->model};
-        use {$repoNs}\Contracts\\{$this->model}RepositoryInterface;
-        {$queryBuilderImport}{$allowedFilterImport}
-
-        class {$this->model}Repository extends BaseRepository implements {$this->model}RepositoryInterface
-        {
-            public function __construct({$this->model} \$model)
-            {
-                parent::__construct(\$model);
-            }
-
-            public function list(): mixed
-            {
-        {$listBody}
-            }
-        }
-        PHP;
+        $content = $this->replacePlaceholders($this->getStub('Repository'), [
+            'repositoryNamespace' => $repoNs,
+            'modelNamespace' => $modelNs,
+            'model' => $this->model,
+            'queryBuilderImport' => $queryBuilderImport,
+            'allowedFilterImport' => $allowedFilterImport,
+            'listBody' => $listBody,
+        ]);
 
         $this->writeFile($path, $content);
         $this->components->info("Repository created: {$path}");
@@ -335,36 +325,11 @@ class GenerateCrudApi extends Command
         $rules = $this->buildCreateValidationRules();
         $rulesString = $this->formatRulesArray($rules);
 
-        $content = <<<PHP
-        <?php
-
-        namespace {$requestNs}\\{$this->model};
-
-        use Illuminate\Foundation\Http\FormRequest;
-
-        class {$this->model}CreateRequest extends FormRequest
-        {
-            /**
-             * Determine if the user is authorized to make this request.
-             */
-            public function authorize(): bool
-            {
-                return true;
-            }
-
-            /**
-             * Get the validation rules that apply to the request.
-             *
-             * @return array<string, array<int, string>>
-             */
-            public function rules(): array
-            {
-                return [
-        {$rulesString}
-                ];
-            }
-        }
-        PHP;
+        $content = $this->replacePlaceholders($this->getStub('CreateRequest'), [
+            'requestNamespace' => $requestNs,
+            'model' => $this->model,
+            'rules' => $rulesString,
+        ]);
 
         $this->writeFile($path, $content);
         $this->components->info("Create request created: {$path}");
@@ -384,36 +349,11 @@ class GenerateCrudApi extends Command
         $rules = $this->buildUpdateValidationRules();
         $rulesString = $this->formatRulesArray($rules);
 
-        $content = <<<PHP
-        <?php
-
-        namespace {$requestNs}\\{$this->model};
-
-        use Illuminate\Foundation\Http\FormRequest;
-
-        class {$this->model}UpdateRequest extends FormRequest
-        {
-            /**
-             * Determine if the user is authorized to make this request.
-             */
-            public function authorize(): bool
-            {
-                return true;
-            }
-
-            /**
-             * Get the validation rules that apply to the request.
-             *
-             * @return array<string, array<int, string>>
-             */
-            public function rules(): array
-            {
-                return [
-        {$rulesString}
-                ];
-            }
-        }
-        PHP;
+        $content = $this->replacePlaceholders($this->getStub('UpdateRequest'), [
+            'requestNamespace' => $requestNs,
+            'model' => $this->model,
+            'rules' => $rulesString,
+        ]);
 
         $this->writeFile($path, $content);
         $this->components->info("Update request created: {$path}");
@@ -434,35 +374,26 @@ class GenerateCrudApi extends Command
         $fields = $this->buildResourceFields();
         $fieldsString = implode("\n", $fields);
 
-        $content = <<<PHP
-        <?php
+        $relationshipLines = [];
+        $relationshipImports = [];
 
-        namespace {$resourceNs};
-
-        use Illuminate\Http\Request;
-        use Illuminate\Http\Resources\Json\JsonResource;
-
-        /**
-         * @mixin \\{$modelNs}\\{$this->model}
-         */
-        class {$this->model}Resource extends JsonResource
-        {
-            /**
-             * Transform the resource into an array.
-             *
-             * @return array<string, mixed>
-             */
-            public function toArray(Request \$request): array
-            {
-                return [
-                    'id' => \$this->id,
-        {$fieldsString}
-                    'created_at' => \$this->created_at,
-                    'updated_at' => \$this->updated_at,
-                ];
-            }
+        foreach ($this->relationships as $relationName => $relatedModel) {
+            $resourceClass = "{$relatedModel}Resource";
+            $relationshipImports[] = "use {$resourceNs}\\{$resourceClass};";
+            $relationshipLines[] = "            '{$relationName}' => {$resourceClass}::make(\$this->whenLoaded('{$relationName}')),";
         }
-        PHP;
+
+        $relationshipImportsString = !empty($relationshipImports) ? implode("\n", $relationshipImports) : '';
+        $relationshipsString = !empty($relationshipLines) ? implode("\n", $relationshipLines) : '';
+
+        $content = $this->replacePlaceholders($this->getStub('Resource'), [
+            'resourceNamespace' => $resourceNs,
+            'modelNamespace' => $modelNs,
+            'model' => $this->model,
+            'fields' => $fieldsString,
+            'relationshipImports' => $relationshipImportsString,
+            'relationships' => $relationshipsString,
+        ]);
 
         $this->writeFile($path, $content);
         $this->components->info("Resource created: {$path}");
@@ -497,19 +428,17 @@ class GenerateCrudApi extends Command
 
         $hasDateFilters = !empty($dateFields);
 
-        // Build Scramble QueryParameter attributes for OpenAPI docs
         $queryParamAttributes = $this->buildQueryParameterAttributes($filterFields, $sortFields, $includeRelations);
 
         $skipRepo = $this->option('skip-repository');
 
         $repositoryImport = $skipRepo ? '' : "use {$repoNs}\\Contracts\\{$this->model}RepositoryInterface;";
 
-        $constructorParam = $skipRepo ? '' : <<<PHP
-
-                public function __construct(
-                    private {$this->model}RepositoryInterface \$repository
-                ) {}
-            PHP;
+        $constructor = $skipRepo ? '' : <<<PHP
+    public function __construct(
+        private {$this->model}RepositoryInterface \$repository
+    ) {}
+PHP;
 
         $paginateMethod = $useJsonPaginate ? 'jsonPaginate' : 'paginate';
 
@@ -536,8 +465,9 @@ class GenerateCrudApi extends Command
         }
 
         $storeBody = $skipRepo
-            ? "\$record = {$this->model}::create(\$request->validated());"
-            : '$record = $this->repository->create($request->validated());';
+            ? "{$this->model}::create(\$request->validated());"
+            : '$this->repository->create($request->validated());';
+        $storeBody = "\$record = {$storeBody}";
 
         $updateBody = $skipRepo
             ? "\${$this->modelVariable}->update(\$request->validated());\n        \$record = \${$this->modelVariable}->fresh();"
@@ -547,78 +477,24 @@ class GenerateCrudApi extends Command
             ? "\${$this->modelVariable}->delete();"
             : "\$this->repository->delete(\${$this->modelVariable}->id);";
 
-        $content = <<<PHP
-        <?php
-
-        namespace {$controllerNs};
-
-        use App\Http\Controllers\Controller;
-        use {$requestNs}\\{$this->model}\\{$this->model}CreateRequest;
-        use {$requestNs}\\{$this->model}\\{$this->model}UpdateRequest;
-        use {$resourceNs}\\{$this->model}Resource;
-        use {$modelNs}\\{$this->model};
-        {$repositoryImport}
-        use Illuminate\Http\JsonResponse;
-        use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
-        use Dedoc\Scramble\Attributes\QueryParameter;
-        {$queryBuilderImport}{$allowedFilterImport}
-
-        class {$this->model}Controller extends Controller
-        {
-        {$constructorParam}
-
-            /**
-             * Display a listing of the resource.
-             */
-        {$queryParamAttributes}
-            public function index(): AnonymousResourceCollection
-            {
-        {$indexBody}
-
-                return {$this->model}Resource::collection(\${$this->modelPlural});
-            }
-
-            /**
-             * Store a newly created resource in storage.
-             */
-            public function store({$this->model}CreateRequest \$request): JsonResponse
-            {
-                {$storeBody}
-
-                return (new {$this->model}Resource(\$record))
-                    ->response()
-                    ->setStatusCode(201);
-            }
-
-            /**
-             * Display the specified resource.
-             */
-            public function show({$this->model} \${$this->modelVariable}): {$this->model}Resource
-            {
-                return new {$this->model}Resource(\${$this->modelVariable});
-            }
-
-            /**
-             * Update the specified resource in storage.
-             */
-            public function update({$this->model}UpdateRequest \$request, {$this->model} \${$this->modelVariable}): {$this->model}Resource
-            {
-                {$updateBody}
-
-                return new {$this->model}Resource(\$record);
-            }
-
-            /**
-             * Remove the specified resource from storage.
-             */
-            public function destroy({$this->model} \${$this->modelVariable}): JsonResponse
-            {
-                {$deleteBody}
-
-                return response()->json(['message' => '{$this->model} deleted successfully.'], 200);
-            }
-        }
-        PHP;
+        $content = $this->replacePlaceholders($this->getStub('Controller'), [
+            'controllerNamespace' => $controllerNs,
+            'requestNamespace' => $requestNs,
+            'resourceNamespace' => $resourceNs,
+            'modelNamespace' => $modelNs,
+            'repositoryImport' => $repositoryImport,
+            'queryBuilderImport' => $queryBuilderImport,
+            'allowedFilterImport' => $allowedFilterImport,
+            'model' => $this->model,
+            'modelVariable' => $this->modelVariable,
+            'modelPlural' => $this->modelPlural,
+            'constructor' => $constructor,
+            'queryParamAttributes' => $queryParamAttributes,
+            'indexBody' => $indexBody,
+            'storeBody' => $storeBody,
+            'updateBody' => $updateBody,
+            'deleteBody' => $deleteBody,
+        ]);
 
         $this->writeFile($path, $content);
         $this->components->info("Controller created: {$path}");
@@ -639,44 +515,13 @@ class GenerateCrudApi extends Command
         $properties = $this->buildDTOProperties();
         $propertiesString = implode("\n", $properties);
 
-        if ($useSpatieData) {
-            $content = <<<PHP
-            <?php
+        $stubName = $useSpatieData ? 'DTOSpatie' : 'DTO';
 
-            namespace {$dtoNs};
-
-            use Carbon\Carbon;
-            use Spatie\LaravelData\Data;
-
-            class {$this->model}DTO extends Data
-            {
-                public function __construct(
-                    public int \$id,
-            {$propertiesString}
-                    public ?Carbon \$created_at = null,
-                    public ?Carbon \$updated_at = null,
-                ) {}
-            }
-            PHP;
-        } else {
-            $content = <<<PHP
-            <?php
-
-            namespace {$dtoNs};
-
-            use Carbon\Carbon;
-
-            class {$this->model}DTO
-            {
-                public function __construct(
-                    public int \$id,
-            {$propertiesString}
-                    public ?string \$created_at = null,
-                    public ?string \$updated_at = null,
-                ) {}
-            }
-            PHP;
-        }
+        $content = $this->replacePlaceholders($this->getStub($stubName), [
+            'dtoNamespace' => $dtoNs,
+            'model' => $this->model,
+            'properties' => $propertiesString,
+        ]);
 
         $this->writeFile($path, $content);
         $this->components->info("DTO created: {$path}");
@@ -691,13 +536,9 @@ class GenerateCrudApi extends Command
         $routeLine = "Route::apiResource('{$routeName}', {$controllerClass});";
 
         if (!$this->files->exists($routeFile)) {
-            $content = <<<PHP
-            <?php
-
-            use Illuminate\Support\Facades\Route;
-
-            {$routeLine}
-            PHP;
+            $content = $this->replacePlaceholders($this->getStub('Routes'), [
+                'routeLine' => $routeLine,
+            ]);
 
             $this->writeFile($routeFile, $content);
             $this->components->info("Routes file created with {$this->model} routes.");

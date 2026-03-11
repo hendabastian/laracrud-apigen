@@ -1,0 +1,70 @@
+<?php
+
+namespace {{ controllerNamespace }};
+
+use App\Http\Controllers\Controller;
+use {{ requestNamespace }}\{{ model }}\{{ model }}CreateRequest;
+use {{ requestNamespace }}\{{ model }}\{{ model }}UpdateRequest;
+use {{ resourceNamespace }}\{{ model }}Resource;
+use {{ modelNamespace }}\{{ model }};
+{{ repositoryImport }}
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Dedoc\Scramble\Attributes\QueryParameter;
+{{ queryBuilderImport }}{{ allowedFilterImport }}
+
+class {{ model }}Controller extends Controller
+{
+{{ constructor }}
+
+    /**
+     * Display a listing of the resource.
+     */
+{{ queryParamAttributes }}
+    public function index(): AnonymousResourceCollection
+    {
+{{ indexBody }}
+
+        return {{ model }}Resource::collection(${{ modelPlural }});
+    }
+
+    /**
+     * Store a newly created resource in storage.
+     */
+    public function store({{ model }}CreateRequest $request): JsonResponse
+    {
+        {{ storeBody }}
+
+        return (new {{ model }}Resource($record))
+            ->response()
+            ->setStatusCode(201);
+    }
+
+    /**
+     * Display the specified resource.
+     */
+    public function show({{ model }} ${{ modelVariable }}): {{ model }}Resource
+    {
+        return new {{ model }}Resource(${{ modelVariable }});
+    }
+
+    /**
+     * Update the specified resource in storage.
+     */
+    public function update({{ model }}UpdateRequest $request, {{ model }} ${{ modelVariable }}): {{ model }}Resource
+    {
+        {{ updateBody }}
+
+        return new {{ model }}Resource($record);
+    }
+
+    /**
+     * Remove the specified resource from storage.
+     */
+    public function destroy({{ model }} ${{ modelVariable }}): JsonResponse
+    {
+        {{ deleteBody }}
+
+        return response()->json(['message' => '{{ model }} deleted successfully.'], 200);
+    }
+}

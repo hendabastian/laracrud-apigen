@@ -1,0 +1,15 @@
+<?php
+
+namespace {{ dtoNamespace }};
+
+use Carbon\Carbon;
+
+class {{ model }}DTO
+{
+    public function __construct(
+        public int $id,
+{{ properties }}
+        public ?string $created_at = null,
+        public ?string $updated_at = null,
+    ) {}
+}
