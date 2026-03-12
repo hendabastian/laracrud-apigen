@@ -380,7 +380,7 @@ class GenerateCrudApi extends Command
         foreach ($this->relationships as $relationName => $relatedModel) {
             $resourceClass = "{$relatedModel}Resource";
             $relationshipImports[] = "use {$resourceNs}\\{$resourceClass};";
-            $relationshipLines[] = "            '{$relationName}' => {$resourceClass}::make(\$this->whenLoaded('{$relationName}')),";
+            $relationshipLines[] = "            '{$relationName}' => {$resourceClass}::collection(\$this->whenLoaded('{$relationName}')),";
         }
 
         $relationshipImportsString = !empty($relationshipImports) ? implode("\n", $relationshipImports) : '';
