@@ -138,12 +138,109 @@ class GenerateCrudApi extends Command
             if (Str::endsWith($name, '_id')) {
                 $relatedTable = Str::plural(Str::beforeLast($name, '_id'));
                 $this->foreignKeys[$name] = $relatedTable;
-                $this->relationships[Str::camel(Str::beforeLast($name, '_id'))] = Str::studly(Str::singular($relatedTable));
+                $relationName = Str::camel(Str::beforeLast($name, '_id'));
+                $this->relationships[$relationName] = [
+                    'model' => Str::studly(Str::singular($relatedTable)),
+                    'type' => 'belongsTo',
+                ];
             }
         }
 
+        $this->detectModelRelationships($modelClass);
+
         if (empty($this->columns)) {
             $this->warn("No columns detected for table '{$table}'. This may happen if the table name does not match the database (e.g. irregular pluralization). Consider adding \$table property to your model.");
+        }
+    }
+
+    protected function detectModelRelationships(string $modelClass): void
+    {
+        $singularTypes = [
+            'Illuminate\Database\Eloquent\Relations\BelongsTo',
+            'Illuminate\Database\Eloquent\Relations\HasOne',
+            'Illuminate\Database\Eloquent\Relations\HasOneThrough',
+            'Illuminate\Database\Eloquent\Relations\MorphOne',
+            'Illuminate\Database\Eloquent\Relations\MorphTo',
+        ];
+
+        $pluralTypes = [
+            'Illuminate\Database\Eloquent\Relations\HasMany',
+            'Illuminate\Database\Eloquent\Relations\HasManyThrough',
+            'Illuminate\Database\Eloquent\Relations\BelongsToMany',
+            'Illuminate\Database\Eloquent\Relations\MorphMany',
+            'Illuminate\Database\Eloquent\Relations\MorphToMany',
+        ];
+
+        $allTypes = array_merge($singularTypes, $pluralTypes);
+
+        $reflection = new \ReflectionClass($modelClass);
+        $model = app($modelClass);
+
+        foreach ($reflection->getMethods(\ReflectionMethod::IS_PUBLIC) as $method) {
+            if ($method->class !== $modelClass || $method->getNumberOfParameters() > 0) {
+                continue;
+            }
+
+            $relationName = $method->getName();
+
+            if (isset($this->relationships[$relationName])) {
+                continue;
+            }
+
+            // First try return type hint
+            $returnType = $method->getReturnType();
+            if ($returnType instanceof \ReflectionNamedType) {
+                $returnTypeName = $returnType->getName();
+
+                if (in_array($returnTypeName, $singularTypes)) {
+                    $type = 'singular';
+                } elseif (in_array($returnTypeName, $pluralTypes)) {
+                    $type = 'plural';
+                } else {
+                    continue;
+                }
+
+                try {
+                    $relation = $model->{$relationName}();
+                    $relatedModel = class_basename($relation->getRelated());
+                } catch (\Throwable $e) {
+                    $relatedModel = Str::studly($relationName);
+                }
+
+                $this->relationships[$relationName] = [
+                    'model' => $relatedModel,
+                    'type' => $type,
+                ];
+
+                continue;
+            }
+
+            // Fallback: call the method and check if it returns a Relation
+            try {
+                $result = $model->{$relationName}();
+
+                if (!$result instanceof \Illuminate\Database\Eloquent\Relations\Relation) {
+                    continue;
+                }
+
+                $resultClass = get_class($result);
+                $relatedModel = class_basename($result->getRelated());
+
+                if (in_array($resultClass, $singularTypes)) {
+                    $type = 'singular';
+                } elseif (in_array($resultClass, $pluralTypes)) {
+                    $type = 'plural';
+                } else {
+                    continue;
+                }
+
+                $this->relationships[$relationName] = [
+                    'model' => $relatedModel,
+                    'type' => $type,
+                ];
+            } catch (\Throwable $e) {
+                continue;
+            }
         }
     }
 
@@ -292,10 +389,14 @@ class GenerateCrudApi extends Command
                 . "            ->allowedSorts([{$sortsString}])\n"
                 . "            ->allowedIncludes([{$includesString}])\n"
                 . "            ->{$paginateMethod}();";
+            $findBody = "        return QueryBuilder::for(get_class(\$this->model))\n"
+                . "            ->allowedIncludes([{$includesString}])\n"
+                . "            ->findOrFail(\$id);";
         } else {
             $queryBuilderImport = '';
             $allowedFilterImport = '';
             $listBody = "        return \$this->model->query()->{$paginateMethod}();";
+            $findBody = "        return \$this->model->findOrFail(\$id);";
         }
 
         $content = $this->replacePlaceholders($this->getStub('Repository'), [
@@ -305,6 +406,7 @@ class GenerateCrudApi extends Command
             'queryBuilderImport' => $queryBuilderImport,
             'allowedFilterImport' => $allowedFilterImport,
             'listBody' => $listBody,
+            'findBody' => $findBody,
         ]);
 
         $this->writeFile($path, $content);
@@ -377,10 +479,15 @@ class GenerateCrudApi extends Command
         $relationshipLines = [];
         $relationshipImports = [];
 
-        foreach ($this->relationships as $relationName => $relatedModel) {
-            $resourceClass = "{$relatedModel}Resource";
+        foreach ($this->relationships as $relationName => $relation) {
+            $resourceClass = "{$relation['model']}Resource";
             $relationshipImports[] = "use {$resourceNs}\\{$resourceClass};";
-            $relationshipLines[] = "            '{$relationName}' => {$resourceClass}::collection(\$this->whenLoaded('{$relationName}')),";
+
+            if ($relation['type'] === 'plural') {
+                $relationshipLines[] = "            '{$relationName}' => {$resourceClass}::collection(\$this->whenLoaded('{$relationName}')),";
+            } else {
+                $relationshipLines[] = "            '{$relationName}' => {$resourceClass}::make(\$this->whenLoaded('{$relationName}')),";
+            }
         }
 
         $relationshipImportsString = !empty($relationshipImports) ? implode("\n", $relationshipImports) : '';
@@ -477,6 +584,20 @@ PHP;
             ? "\${$this->modelVariable}->delete();"
             : "\$this->repository->delete(\${$this->modelVariable}->id);";
 
+        $showQueryParamAttributes = $this->buildShowQueryParameterAttributes($includeRelations);
+
+        if ($skipRepo) {
+            if ($useQueryBuilder && !empty($includeRelations)) {
+                $showBody = "        \${$this->modelVariable} = QueryBuilder::for({$this->model}::class)\n"
+                    . "            ->allowedIncludes([{$includesString}])\n"
+                    . "            ->findOrFail(\${$this->modelVariable}->id);";
+            } else {
+                $showBody = '';
+            }
+        } else {
+            $showBody = "        \${$this->modelVariable} = \$this->repository->find(\${$this->modelVariable}->id);";
+        }
+
         $content = $this->replacePlaceholders($this->getStub('Controller'), [
             'controllerNamespace' => $controllerNs,
             'requestNamespace' => $requestNs,
@@ -494,6 +615,8 @@ PHP;
             'storeBody' => $storeBody,
             'updateBody' => $updateBody,
             'deleteBody' => $deleteBody,
+            'showBody' => $showBody,
+            'showQueryParamAttributes' => $showQueryParamAttributes,
         ]);
 
         $this->writeFile($path, $content);
@@ -751,6 +874,17 @@ PHP;
         }
 
         return implode("\n", $attributes);
+    }
+
+    protected function buildShowQueryParameterAttributes(array $includeRelations): string
+    {
+        if (empty($includeRelations)) {
+            return '';
+        }
+
+        $allowedIncludes = implode(', ', $includeRelations);
+
+        return "    #[QueryParameter('include', description: 'Include related resources. Allowed: {$allowedIncludes}. Comma-separated for multiple.', type: 'string', example: '{$includeRelations[0]}')]";
     }
 
     protected function getFilterableFields(): array

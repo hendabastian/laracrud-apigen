@@ -43,8 +43,11 @@ class {{ model }}Controller extends Controller
     /**
      * Display the specified resource.
      */
+{{ showQueryParamAttributes }}
     public function show({{ model }} ${{ modelVariable }}): {{ model }}Resource
     {
+{{ showBody }}
+
         return new {{ model }}Resource(${{ modelVariable }});
     }
 

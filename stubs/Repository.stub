@@ -4,6 +4,7 @@ namespace {{ repositoryNamespace }};
 
 use {{ modelNamespace }}\{{ model }};
 use {{ repositoryNamespace }}\Contracts\{{ model }}RepositoryInterface;
+use Illuminate\Database\Eloquent\Model;
 {{ queryBuilderImport }}{{ allowedFilterImport }}
 
 class {{ model }}Repository extends BaseRepository implements {{ model }}RepositoryInterface
@@ -16,5 +17,10 @@ class {{ model }}Repository extends BaseRepository implements {{ model }}Reposit
     public function list(): mixed
     {
 {{ listBody }}
+    }
+
+    public function find(int $id): ?Model
+    {
+{{ findBody }}
     }
 }
